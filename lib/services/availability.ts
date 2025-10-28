@@ -108,6 +108,7 @@ export function getSuggestedSlots(
 
           if (overlap >= 60) {
             // At least 1 hour
+            if (!slot1.dayOfWeek) continue;
             const dayOffset = DAY_OF_WEEK_TO_NUMBER[slot1.dayOfWeek];
             const slotDate = addDays(weekStart, dayOffset + week * 7);
 
