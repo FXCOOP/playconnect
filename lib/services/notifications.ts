@@ -111,7 +111,7 @@ export async function sendConfirmationEmail(params: {
   proposalId: string;
   icsAttachment?: string;
 }) {
-  const { recipientEmail, recipientName, otherParentName, childName, otherChildName, dateTime, location, proposalId, icsAttachment } = params;
+  const { recipientEmail, recipientName, childName, otherChildName, dateTime, location, proposalId, icsAttachment } = params;
   const proposalUrl = `${APP_URL}/proposals/${proposalId}`;
 
   try {
