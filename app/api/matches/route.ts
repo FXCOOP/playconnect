@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
     }
 
     // 4. Get candidate children (same city, within radius, age-compatible)
-    const maxRadiusKm = child.household.matchRadiusKm;
+    // Note: maxRadiusKm could be used for H3 geohash filtering in production
     const candidates = await prisma.child.findMany({
       where: {
         id: {
