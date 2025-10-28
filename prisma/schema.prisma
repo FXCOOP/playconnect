@@ -1,0 +1,614 @@
+// PlayConnect Database Schema
+// Complete data model for secure playdate coordination platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// User & Authentication
+// ========================================
+
+enum Role {
+  PARENT
+  ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  role          Role      @default(PARENT)
+  password      String?   // Hashed, null for OAuth-only users
+  phoneNumber   String?
+  phoneVerified Boolean   @default(false)
+
+  // Privacy preferences
+  photoConsentGiven Boolean @default(false)
+  showExactLocation Boolean @default(false)
+
+  // Metadata
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+  isActive      Boolean   @default(true)
+  isBanned      Boolean   @default(false)
+  banReason     String?
+
+  // Relations
+  accounts      Account[]
+  sessions      Session[]
+  household     Household?
+  sentMessages  Message[] @relation("MessageSender")
+  proposals     Proposal[]
+  groupMemberships GroupMember[]
+  reports       Report[]  @relation("ReportCreator")
+  reportedBy    Report[]  @relation("ReportedUser")
+  auditEvents   AuditEvent[]
+
+  @@index([email])
+  @@index([role])
+  @@index([isActive, isBanned])
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ========================================
+// Household & Children
+// ========================================
+
+model Household {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Location (coarse)
+  addressLine1 String?
+  addressLine2 String?
+  city        String
+  state       String?
+  country     String   @default("US")
+  postalCode  String?
+
+  // Geospatial (H3 geohash for privacy)
+  latitude    Float?
+  longitude   Float?
+  h3Index     String?  // H3 resolution 7 (~5km hexagons)
+
+  // Preferences
+  matchRadiusKm    Int      @default(8)
+  languages        String[] // Array of ISO language codes
+  preferredContact String   @default("email") // email, phone, app
+
+  // House rules for safety matching
+  hasPets          Boolean  @default(false)
+  petTypes         String[] // ["dog", "cat", etc.]
+  smokingHousehold Boolean  @default(false)
+  screenTimePolicy String?  // "limited", "moderate", "unrestricted"
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  children    Child[]
+
+  @@index([city, country])
+  @@index([h3Index])
+  @@index([userId])
+  @@map("households")
+}
+
+enum AgeBand {
+  INFANT_0_12M      // 0-12 months
+  TODDLER_13_24M    // 13-24 months
+  TODDLER_2_3Y      // 2-3 years
+  PRESCHOOL_4_5Y    // 4-5 years
+  SCHOOL_AGE_6_8Y   // 6-8 years
+  SCHOOL_AGE_9_12Y  // 9-12 years
+  TEEN_13_PLUS      // 13+ (optional)
+}
+
+model Child {
+  id          String   @id @default(cuid())
+  householdId String
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  // Basic info (no exact DOB for privacy)
+  firstName   String
+  birthYear   Int
+  birthMonth  Int      // 1-12
+  ageInMonths Int      // Computed from birthYear/Month, updated monthly
+  ageBand     AgeBand
+  pronouns    String?  // "he/him", "she/her", "they/them", custom
+
+  // Photo
+  photoUrl    String?
+  photoBlurred Boolean  @default(true)
+
+  // Special considerations
+  allergies        String[] // ["peanuts", "gluten", etc.]
+  dietaryNeeds     String?  @db.Text
+  neurodiversity   String?  @db.Text // Optional description
+  accessibilityNeeds String? @db.Text
+
+  // Bio
+  bio         String?  @db.Text
+
+  // Privacy
+  isActive    Boolean  @default(true)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  interests         ChildInterest[]
+  availabilitySlots AvailabilitySlot[]
+  matches           Match[]
+  proposals         Proposal[]
+  groupMemberships  GroupMember[]
+
+  @@index([householdId])
+  @@index([ageBand])
+  @@index([isActive])
+  @@index([ageInMonths])
+  @@map("children")
+}
+
+// ========================================
+// Interests
+// ========================================
+
+enum InterestCategory {
+  SPORTS
+  ARTS
+  MUSIC
+  STEM
+  GAMES
+  OUTDOOR
+  READING
+  SOCIAL
+  OTHER
+}
+
+model Interest {
+  id          String            @id @default(cuid())
+  name        String            @unique
+  slug        String            @unique
+  category    InterestCategory
+  description String?
+  iconName    String?           // Lucide icon name
+
+  // Moderation
+  isApproved  Boolean           @default(false)
+  isCustom    Boolean           @default(false)
+  createdBy   String?           // userId if custom
+
+  createdAt   DateTime          @default(now())
+
+  children    ChildInterest[]
+  groups      Group[]
+
+  @@index([category])
+  @@index([isApproved])
+  @@map("interests")
+}
+
+model ChildInterest {
+  id         String   @id @default(cuid())
+  childId    String
+  interestId String
+
+  child      Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+  interest   Interest @relation(fields: [interestId], references: [id], onDelete: Cascade)
+
+  // Proficiency level
+  level      String?  // "beginner", "intermediate", "advanced"
+  notes      String?
+
+  createdAt  DateTime @default(now())
+
+  @@unique([childId, interestId])
+  @@index([childId])
+  @@index([interestId])
+  @@map("child_interests")
+}
+
+// ========================================
+// Availability
+// ========================================
+
+enum DayOfWeek {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
+enum SlotType {
+  RECURRING
+  AD_HOC
+}
+
+model AvailabilitySlot {
+  id        String     @id @default(cuid())
+  childId   String
+  child     Child      @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  type      SlotType
+
+  // Recurring slots
+  dayOfWeek DayOfWeek?
+  startTime String?    // HH:MM format
+  endTime   String?    // HH:MM format
+
+  // Ad-hoc slots
+  startDateTime DateTime?
+  endDateTime   DateTime?
+
+  // Metadata
+  notes     String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([childId])
+  @@index([type, dayOfWeek])
+  @@index([startDateTime, endDateTime])
+  @@map("availability_slots")
+}
+
+// ========================================
+// Matching
+// ========================================
+
+model Match {
+  id              String   @id @default(cuid())
+  childId         String
+  matchedChildId  String
+
+  child           Child    @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  // Score breakdown (0-100)
+  overallScore    Float
+  interestScore   Float
+  ageScore        Float
+  distanceScore   Float
+  availabilityScore Float
+  safetyScore     Float
+
+  // Explanation
+  explanation     Json     // Array of {factor, weight, contribution, details}
+
+  // Computed data
+  sharedInterests String[] // Interest IDs
+  distanceKm      Float
+  availableMinutes Int     // Overlapping minutes per week
+
+  // Status
+  isMutual        Boolean  @default(false) // Both sides generated
+  isHidden        Boolean  @default(false) // User dismissed
+
+  // Cache invalidation
+  computedAt      DateTime @default(now())
+  expiresAt       DateTime // Recompute after this
+
+  @@unique([childId, matchedChildId])
+  @@index([childId, overallScore(sort: Desc)])
+  @@index([matchedChildId])
+  @@index([computedAt])
+  @@index([expiresAt])
+  @@map("matches")
+}
+
+// ========================================
+// Proposals & Playdates
+// ========================================
+
+enum ProposalStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  COMPLETED
+}
+
+enum VenueType {
+  PROPOSER_HOME
+  OTHER_HOME
+  PARK
+  PLAYGROUND
+  LIBRARY
+  MUSEUM
+  CAFE
+  OTHER
+}
+
+model Proposal {
+  id              String         @id @default(cuid())
+
+  // Parties
+  proposerId      String
+  proposer        User           @relation(fields: [proposerId], references: [id], onDelete: Cascade)
+  proposerChildId String
+  proposerChild   Child          @relation(fields: [proposerChildId], references: [id], onDelete: Cascade)
+
+  recipientUserId String
+  recipientChildId String
+
+  // Proposal details
+  status          ProposalStatus @default(PENDING)
+
+  // Time slots (JSON array of {start, end, label})
+  proposedSlots   Json           // [{start: ISO, end: ISO, label: "Saturday morning"}]
+  confirmedSlot   Json?          // {start: ISO, end: ISO}
+
+  // Venue
+  venueType       VenueType
+  venueName       String?
+  venueAddress    String?
+  venueNotes      String?        @db.Text
+
+  // Activity
+  suggestedActivity String?
+  activityNotes     String?      @db.Text
+
+  // ICS calendar file
+  icsData         String?        @db.Text
+
+  // Communication
+  messages        Message[]
+
+  // Metadata
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  confirmedAt     DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancellationReason String?
+
+  @@index([proposerId])
+  @@index([recipientUserId])
+  @@index([status])
+  @@index([proposerChildId])
+  @@index([recipientChildId])
+  @@index([createdAt])
+  @@map("proposals")
+}
+
+// ========================================
+// Messaging
+// ========================================
+
+model Message {
+  id          String   @id @default(cuid())
+  proposalId  String
+  proposal    Proposal @relation(fields: [proposalId], references: [id], onDelete: Cascade)
+
+  senderId    String
+  sender      User     @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+
+  content     String   @db.Text
+  isTemplate  Boolean  @default(false) // Quick-reply template
+
+  // Moderation
+  isFlagged   Boolean  @default(false)
+  flagReason  String?
+
+  // Metadata
+  sentAt      DateTime @default(now())
+  readAt      DateTime?
+
+  @@index([proposalId, sentAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// ========================================
+// Groups / Interest Circles
+// ========================================
+
+enum GroupVisibility {
+  PUBLIC
+  INVITE_ONLY
+  PRIVATE
+}
+
+model Group {
+  id          String          @id @default(cuid())
+  name        String
+  description String?         @db.Text
+  visibility  GroupVisibility @default(PUBLIC)
+
+  // Primary interest
+  interestId  String
+  interest    Interest        @relation(fields: [interestId], references: [id])
+
+  // Age band constraints
+  minAgeBand  AgeBand?
+  maxAgeBand  AgeBand?
+
+  // Metadata
+  imageUrl    String?
+  inviteCode  String?         @unique
+  maxMembers  Int             @default(20)
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  isActive    Boolean         @default(true)
+
+  members     GroupMember[]
+
+  @@index([interestId])
+  @@index([visibility, isActive])
+  @@map("groups")
+}
+
+enum GroupRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model GroupMember {
+  id        String    @id @default(cuid())
+  groupId   String
+  group     Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  childId   String
+  child     Child     @relation(fields: [childId], references: [id], onDelete: Cascade)
+
+  role      GroupRole @default(MEMBER)
+  joinedAt  DateTime  @default(now())
+
+  @@unique([groupId, childId])
+  @@index([groupId])
+  @@index([userId])
+  @@index([childId])
+  @@map("group_members")
+}
+
+// ========================================
+// Moderation & Reports
+// ========================================
+
+enum ReportReason {
+  SPAM
+  INAPPROPRIATE_CONTENT
+  HARASSMENT
+  SAFETY_CONCERN
+  FAKE_PROFILE
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id              String       @id @default(cuid())
+
+  reportedUserId  String
+  reportedUser    User         @relation("ReportedUser", fields: [reportedUserId], references: [id], onDelete: Cascade)
+
+  reporterId      String
+  reporter        User         @relation("ReportCreator", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  reason          ReportReason
+  description     String       @db.Text
+  status          ReportStatus @default(PENDING)
+
+  // Admin notes
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  reviewNotes     String?      @db.Text
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([reportedUserId])
+  @@index([reporterId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("reports")
+}
+
+// ========================================
+// Audit Trail
+// ========================================
+
+enum AuditAction {
+  USER_CREATED
+  USER_UPDATED
+  USER_DELETED
+  USER_BANNED
+  CHILD_CREATED
+  CHILD_UPDATED
+  CHILD_DELETED
+  PROPOSAL_CREATED
+  PROPOSAL_CONFIRMED
+  PROPOSAL_CANCELLED
+  MESSAGE_SENT
+  REPORT_CREATED
+  REPORT_RESOLVED
+  INTEREST_APPROVED
+  GROUP_CREATED
+  GROUP_JOINED
+}
+
+model AuditEvent {
+  id          String      @id @default(cuid())
+
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  action      AuditAction
+  entityType  String      // "User", "Child", "Proposal", etc.
+  entityId    String
+  metadata    Json?       // Additional context
+
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime    @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_events")
+}
