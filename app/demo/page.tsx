@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 export default function DemoPage() {
   const [selectedChild, setSelectedChild] = useState(0);
-  const [matches, setMatches] = useState([
+  const matches = [
     {
       name: 'Emma Thompson',
       age: 8,
@@ -36,7 +36,7 @@ export default function DemoPage() {
       parent: 'Wei Chen',
       nextAvailable: 'Friday 4pm',
     },
-  ]);
+  ];
 
   const children = [
     {
