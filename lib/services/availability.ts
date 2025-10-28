@@ -4,7 +4,7 @@
  */
 
 import { DayOfWeek, SlotType, AvailabilitySlot } from '@prisma/client';
-import { addDays, startOfWeek, isWithinInterval, differenceInMinutes } from 'date-fns';
+import { addDays, startOfWeek, isWithinInterval } from 'date-fns';
 
 /**
  * Calculate minutes of overlap per week for recurring slots
