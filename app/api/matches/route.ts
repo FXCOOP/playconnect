@@ -74,7 +74,6 @@ export async function GET(request: NextRequest) {
         isActive: true,
         household: {
           city: child.household.city, // Simple city filter; use H3 for production
-          isActive: true,
           user: {
             isActive: true,
             isBanned: false,
